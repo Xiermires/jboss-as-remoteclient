@@ -71,7 +71,7 @@ The advantadge is that naming convention is not needed. Since once the proxyCach
 
 For instance a client would do:
 
-``` 
+```java
 
     final MathRemote mathRemote = Services.find(MathRemote.class);
     mathRemote.sum(1.0, 1.0);
@@ -93,7 +93,7 @@ I add also how to do remote calls to ejbs in JBoss 7.1.x or later if willing to 
 
 Calling using JBoss AS 7.x recommended way:
 
-```
+```java
 
     final Properties props = new Properties();
     props.put("remote.connectionprovider.create.options.org.xnio.Options.SSL_ENABLED", "false");
@@ -125,7 +125,7 @@ This approach has two pitfalls.
 
 1) Since it "optimize" the lookup by not calling the server. If the given name is wrong it won't complain, but it will fail when trying to use it.
 
-``` 
+```java
     
     // set up properties as above
     final InitialContext ic = new InitialContext(properties);
@@ -150,7 +150,7 @@ or as an applet parameter, or in an application resource file:  java.naming.fact
 
 To solve that the remote properties are required:
 
-```
+```java
 
     props.put(Context.INITIAL_CONTEXT_FACTORY, "org.jboss.naming.remote.client.InitialContextFactory");
     props.put(Context.PROVIDER_URL, "remote://localhost:4447");
@@ -160,7 +160,7 @@ To solve that the remote properties are required:
 
 Calling using the old remote way: 
 
-```
+```java
 
     final Properties props = new Properties();
     props.put(Context.INITIAL_CONTEXT_FACTORY, "org.jboss.naming.remote.client.InitialContextFactory");
