@@ -6,6 +6,7 @@ It took some hours but I finally manage to make auto discovery of the jboss bind
 This app can be built with maven using goal : 'compile war:war', then copy the war into the JBoss deployments folder.
 
 '''
+
 public class Services
 {
     private Services()
@@ -61,6 +62,7 @@ public class Services
         return name.substring(name.indexOf("!") + 1, name.length());
     }
 }
+
 '''
 
 I had some similar setup in JBoss 4/5 w/o issues and I was having trouble into using the same concept in JBoss 7.x.
@@ -70,8 +72,10 @@ The advantadge is that naming convention is not needed. Since once the proxyCach
 For instance a client would do:
 
 ''' 
+
     final MathRemote mathRemote = Services.find(MathRemote.class);
     mathRemote.sum(1.0, 1.0);
+    
 '''
    
 This approach doesn't work previous to 7.2. There are bugs in 7.1.x versions and InitialContext#list() / #listBindings() don't list any remotes.
@@ -90,6 +94,7 @@ I add also how to do remote calls to ejbs in JBoss 7.1.x or later if willing to 
 Calling using JBoss AS 7.x recommended way:
 
 '''
+
     final Properties props = new Properties();
     props.put("remote.connectionprovider.create.options.org.xnio.Options.SSL_ENABLED", "false");
     props.put("remote.connections", "default");
@@ -113,6 +118,7 @@ Calling using JBoss AS 7.x recommended way:
     final String viewClassName = MathRemote.class.getName();
     final MathRemote mr = (MathRemote) ic.lookup("ejb:" + "/" + moduleName + "/" + beanName + "!" + viewClassName);
     assertThat(2.0, is(mr.sum(1.0, 1.0)));
+    
 '''
 
 This approach has two pitfalls. 
@@ -129,6 +135,7 @@ This approach has two pitfalls.
     final String viewClassName = MathRemote.class.getName();
     final MathRemote mr = (MathRemote) ic.lookup("ejb:" + "/" + moduleName + "/" + beanName + "!" + viewClassName); // works
     assertThat(2.0, is(mr.sum(1.0, 1.0))); // fails 
+    
 '''
 
 Running this code will throw the following exception:
@@ -144,14 +151,17 @@ or as an applet parameter, or in an application resource file:  java.naming.fact
 To solve that the remote properties are required:
 
 '''
-        props.put(Context.INITIAL_CONTEXT_FACTORY, "org.jboss.naming.remote.client.InitialContextFactory");
-        props.put(Context.PROVIDER_URL, "remote://localhost:4447");
+
+    props.put(Context.INITIAL_CONTEXT_FACTORY, "org.jboss.naming.remote.client.InitialContextFactory");
+    props.put(Context.PROVIDER_URL, "remote://localhost:4447");
+    
 '''
 
 
 Calling using the old remote way: 
 
 '''
+
     final Properties props = new Properties();
     props.put(Context.INITIAL_CONTEXT_FACTORY, "org.jboss.naming.remote.client.InitialContextFactory");
     props.put(Context.PROVIDER_URL, "remote://localhost:4447");
@@ -163,6 +173,7 @@ Calling using the old remote way:
 
     final MathRemote mr = (MathRemote) ic.lookup("/webapp-0.0.1-SNAPSHOT/Math!org.webapp.MathRemote");
     assertThat(2.0, is(mr.sum(1.0, 1.0)));
+    
 '''
 
 Previous pitfalls don't affect this way. Both list/listBinding work. Plus in the case a naming is wrong, lookup throws a name not bound exception like.
