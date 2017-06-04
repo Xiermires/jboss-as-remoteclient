@@ -1,6 +1,8 @@
 # jboss-as-remoteclient
 Remote calls to JBoss AS 7.x
 
+This app can be built with maven using goal : 'compile war:war', then copy the war into the JBoss 7.x deployments folder.
+
 Small description
 -----------------
 
@@ -33,17 +35,20 @@ This code has unfortunately one pitfall.
 
 - It only works if the JBoss server is deployed as localhost in the same machine as the ejb client. 
 
-Notice that no auth is being used. That is intended, even when JBoss we have configured to use ApplicationRealm for remote connections, the InitialContext identifies there is a JBoss in localhost and apply some accessing optimizations. Between them, ignoring the auth.
+Notice that no auth is being used. That is intended, even when JBoss is indeed configured to use ApplicationRealm for remote connections, the InitialContext identifies there is a JBoss in localhost and apply some accessing optimizations. Between them, ignoring the auth.
 
-One could think, no problem, JBoss 7.x provides new options that allow turning off those optimizations. So, adding this option 
+One could think, no problem, JBoss 7.x provides new options that allow turning off those optimizations. So, adding these options:
 
-"remote.connection.default.connect.options.org.xnio.Options.SASL_DISALLOWED_MECHANISMS=JBOSS-LOCAL-USER"
+"remote.connections=1"
+"remote.connection.1.connect.options.org.xnio.Options.SASL_DISALLOWED_MECHANISMS=JBOSS-LOCAL-USER"
 
 shall turn them off. Unfortunately, no matter how you add the option (jboss-ejb-client.properties, programatically through the selectors, directly in the Properties from 7.2 onwards) it won't work.
 
-The remote InitialContextFactory ignores any provided ejb-client properties, which leads to the next problem. If you try the previous approach with a non-localhost deploy jboss, it won't authentificate (obviously after adding the CREDENTIALS, pass in base64 and so on). 
+The remote InitialContextFactory ignores any provided ejb-client properties. 
 
-Why is that ? No clue. Only reason that comes to mind is that since the InitialContext is ignoring ejb-client properties, you need a fully-set up SSL, etc. 
+As mentioned, the above method won't work if JBoss is deployed in a remote host. The InitialContext fails to authentificate (obviously after adding the CREDENTIALS, password in base64 and so on). 
+
+Why is that ? No clue. Only reason that comes to mind is that, since the InitialContext is ignoring ejb-client properties, you need a fully-set up SSL, etc. 
 
 
 <b>Using the JBoss recommended approach</b>
@@ -73,14 +78,12 @@ So, with this code we get an InitialContext ready to be used as JBoss 7.x recomm
     final InitialContext ic = new InitialContext(props);
 ```
 
-This InitialContext works both when JBoss is deployed in localhost or in some remote host. 
-
-Pitfalls.
+This InitialContext works both when JBoss is deployed in localhost or in some remote host but it has the following pitfalls. 
 
 1) This InitialContext doesn't support #list or #listBindings. So, auto-discovery of bound methods is not available. By using this method, you are kind of "obliged" to let your clients know how you package your application (earName, moduleName).
    Problem is that needs maintenance. When we create a new module, bean or whatsoever, we must communicate the client that a new bean is available... manually, so that it can build the "ejb:ear/module/.../" name. 
    
-2) The InitialContext doesn't fail while looking up for non bound beans. That is a feature, the new system doesn't check the server while building the proxy. So it can build proxys that do not point anywhere. This proxys will fall when invoking
+2) The InitialContext doesn't fail while looking up for non bound beans. That is a feature, the new system doesn't check the server while building the proxy. So it can build proxys that point nowhere. This proxys will fall when invoking
    their methods (runtime), and not during the setting up phase. For instance check this code out:
 
    ```java
@@ -118,7 +121,7 @@ public interface BeansRemote
 
 Now we can create a ServiceLocator that access remotelly the BeansRemote#getBeans() using the JBoss recommended approach, get the list of { bean interface : jndi name } bound and use it to access whenever the client requests for an interface.
 
-This also has the advantadge that we workaround the second pitfall, since client cannot mess up while building the jndi name. 
+This also has the advantadge that it workarounds the second pitfall, since client cannot mess up while building the jndi name. 
 
 Summary
 -------
