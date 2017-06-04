@@ -1,181 +1,133 @@
 # jboss-as-remoteclient
 Remote calls to JBoss AS 7.x
 
-It took some hours but I finally manage to make auto discovery of the jboss bindings in JBoss AS 7.2. 
+Small description
+-----------------
 
-This app can be built with maven using goal : 'compile war:war', then copy the war into the JBoss deployments folder.
+Prior to JBoss 7.x I used to include a ServiceLocator in clients, so that they would use it to obtain remote ejb proxys to work with.
 
-```java
+That was pretty straight forward because the jnp InitialContext supported the #list and #listBindings methods. So, it was effortlessly: iterate, cache, provide later through a "<T> T find(Class<T> interfaze)" method.
 
-public class Services
-{
-    private Services()
-    {
-    }
+JBoss 7.x drop jnp and handled the JNDI with the remoting project, plus added some new namespaces which in theory improve the performance and add extra granularity to clients. 
 
-    private static final Map<Class<?>, Object> cache = new HashMap<Class<?>, Object>();
+Problem. The EJBRemoteContext doesn't support list or listBinding. So, the mentioned ServiceLocator can no longer iterate the bound services. 
 
-    static
-    {
-        try
-        {
-            final Properties props = new Properties();
-            props.put(Context.INITIAL_CONTEXT_FACTORY, "org.jboss.naming.remote.client.InitialContextFactory");
-            props.put(Context.PROVIDER_URL, "remote://localhost:4447");
-            props.put("remote.connection.default.username", "testuser");
-            props.put("remote.connection.default.password", "testuser!");
-            props.put("jboss.naming.client.ejb.context", "true");
+Identifying the different scenarios
+-----------------------------------
 
-            cache.putAll(getProxies(new InitialContext(props), ""));
-        }
-        catch (Exception e)
-        {
-            throw new RuntimeException("Initialization failed. Blow up.");
-        }
-    }
-    
-    @SuppressWarnings("unchecked") // should be safe
-    public static <T> T find(Class<T> interfaze)
-    {
-        return (T) cache.get(interfaze);
-    }
+Identifying most of the different scenarios has taken a while. I don't know if because at that point the technology wasn't mature, but it looks extrem overcomplicated and error-prone.
 
-    // Support default bindings in JBoss AS 7.2 and forward. WildFly untested. I guess it's the
-    // same.
-    private static Map<Class<?>, Object> getProxies(InitialContext ic, String namespace) throws NamingException,
-            ClassNotFoundException
-    {
-        final Map<Class<?>, Object> m = new HashMap<Class<?>, Object>();
-        final NamingEnumeration<Binding> bindings = ic.listBindings(namespace);
-        while (bindings.hasMore())
-        {
-            final Binding next = bindings.next();
-            if (next.getObject() instanceof Context)
-                m.putAll(getProxies(ic, namespace + "/" + next.getName() + "/"));
-            else m.put(Class.forName(parseInterfaceName(next.getName())), next.getObject());
-        }
-        return m;
-    }
-
-    private static String parseInterfaceName(String name)
-    {
-        return name.substring(name.indexOf("!") + 1, name.length());
-    }
-}
-
-```
-
-I had some similar setup in JBoss 4/5 w/o issues and I was having trouble into using the same concept in JBoss 7.x.
-
-The advantadge is that naming convention is not needed. Since once the proxyCache is built, you can get your process instances by means of the iterface. 
-
-For instance a client would do:
+First let's mention that it is still possible to obtain remotelly an InitialContext that supports #list and #listBindings. Let's see how:
 
 ```java
-
-    final MathRemote mathRemote = Services.find(MathRemote.class);
-    mathRemote.sum(1.0, 1.0);
-    
-```
-   
-This approach doesn't work previous to 7.2. There are bugs in 7.1.x versions and InitialContext#list() / #listBindings() don't list any remotes.
-
-Apparently the JBoss 7.x recommended approach is better cause it also considers load balancing. In this case, the Services class could
-create a Map<Class<?>, String>> where the class is still the interface and the String is the "ejb:/application/module/..." jndi like id. 
-Then create an initial context using the recommended approach (see below) and do the lookups of the strings stored in the cache. Still autodiscovery, plus 
-any advantages the Context.URL_PKG_PREFIXES approach might bring.
-
-
-----------------------------------------------------------------------------------------------------------------------------------------------------
-
-
-I add also how to do remote calls to ejbs in JBoss 7.1.x or later if willing to stick to the naming conventions.
-
-Calling using JBoss AS 7.x recommended way:
-
-```java
-
     final Properties props = new Properties();
+    props.put(Context.INITIAL_CONTEXT_FACTORY, "org.jboss.naming.remote.client.InitialContextFactory");
+    props.put(Context.PROVIDER_URL, "remote://localhost:4447");
+    props.put("jboss.naming.client.ejb.context", "true");
+    props.put("org.jboss.ejb.client.scoped.context", "true");
+
+    final InitialContext ic = new InitialContext(props);
+```
+
+This code has unfortunately one pitfall. 
+
+- It only works if the JBoss server is deployed as localhost in the same machine as the ejb client. 
+
+Notice that no auth is being used. That is intended, even when JBoss we have configured to use ApplicationRealm for remote connections, the InitialContext identifies there is a JBoss in localhost and apply some accessing optimizations. Between them, ignoring the auth.
+
+One could think, no problem, JBoss 7.x provides new options that allow turning off those optimizations. So, adding this option 
+
+"remote.connection.default.connect.options.org.xnio.Options.SASL_DISALLOWED_MECHANISMS=JBOSS-LOCAL-USER"
+
+shall turn them off. Unfortunately, no matter how you add the option (jboss-ejb-client.properties, programatically through the selectors, directly in the Properties from 7.2 onwards) it won't work.
+
+The remote InitialContextFactory ignores any provided ejb-client properties, which leads to the next problem. If you try the previous approach with a non-localhost deploy jboss, it won't authentificate (obviously after adding the CREDENTIALS, pass in base64 and so on). 
+
+Why is that ? No clue. Only reason that comes to mind is that since the InitialContext is ignoring ejb-client properties, you need a fully-set up SSL, etc. 
+
+
+<b>Using the JBoss recommended approach</b>
+
+JBoss recommends using a new approach to invoke the remote clients. Since we are using EAP 6.1 for this tests (equivalent to JBoss AS 7.2.Final), we can ignore the jboss-ejb-client.properties file or its programatically version and add the properties direct in the properties file. The JBoss client will set up the EJBClientContext for us (nice).
+
+So, with this code we get an InitialContext ready to be used as JBoss 7.x recommends us to.
+
+```java
+    final Properties props = new Properties();
+    // ejb-client.properties
     props.put("remote.connectionprovider.create.options.org.xnio.Options.SSL_ENABLED", "false");
     props.put("remote.connections", "default");
     props.put("remote.connection.default.port", "4447");
     props.put("remote.connection.default.host", "127.0.0.1");
-    props.put("remote.connection.default.username", "testuser");
-    props.put("remote.connection.default.password", "testuser!");
-    props.put("remote.connection.default.connect.options.org.xnio.Options.SASL_POLICY_NOANONYMOUS", "false");
-
-    final EJBClientConfiguration ejbClientConfiguration = new PropertiesBasedEJBClientConfiguration(props);
-    final ContextSelector<EJBClientContext> contextSelector = new ConfigBasedEJBClientContextSelector(ejbClientConfiguration);
-    EJBClientContext.setSelector(contextSelector);
-
-    final Properties properties = new Properties();
-    properties.put(Context.URL_PKG_PREFIXES, "org.jboss.ejb.client.naming");
-
-    final InitialContext ic = new InitialContext(properties);
-
-    final String moduleName = "webapp-0.0.1-SNAPSHOT";
-    final String beanName = Math.class.getSimpleName();
-    final String viewClassName = MathRemote.class.getName();
-    final MathRemote mr = (MathRemote) ic.lookup("ejb:" + "/" + moduleName + "/" + beanName + "!" + viewClassName);
-    assertThat(2.0, is(mr.sum(1.0, 1.0)));
+    props.put("remote.connection.default.username", "jboss");
+    props.put("remote.connection.default.password", "JBOSSPASS1!");
+    props.put("remote.connection.default.connect.options.org.xnio.Options.SASL_POLICY_NOANONYMOUS", "false"); // allow anonymous logins (this is useless since the remoting is configured as ApplicationRealm)
+    props.put("remote.connection.default.connect.options.org.xnio.Options.SASL_POLICY_NOPLAINTEXT", "false"); // allows plain pw, no base64
+    props.put("remote.connection.default.connect.options.org.xnio.Options.SASL_DISALLOWED_MECHANISMS", "JBOSS-LOCAL-USER"); // always remote
     
+    // initial context.
+    props.put(Context.URL_PKG_PREFIXES, "org.jboss.ejb.client.naming");
+    props.put("jboss.naming.client.ejb.context", "true");
+    props.put("org.jboss.ejb.client.scoped.context", "true");
+   
+    final InitialContext ic = new InitialContext(props);
 ```
 
-This approach has two pitfalls. 
+This InitialContext works both when JBoss is deployed in localhost or in some remote host. 
 
-1) Since it "optimize" the lookup by not calling the server. If the given name is wrong it won't complain, but it will fail when trying to use it.
+Pitfalls.
 
-```java
+1) This InitialContext doesn't support #list or #listBindings. So, auto-discovery of bound methods is not available. By using this method, you are kind of "obliged" to let your clients know how you package your application (earName, moduleName).
+   Problem is that needs maintenance. When we create a new module, bean or whatsoever, we must communicate the client that a new bean is available... manually, so that it can build the "ejb:ear/module/.../" name. 
+   
+2) The InitialContext doesn't fail while looking up for non bound beans. That is a feature, the new system doesn't check the server while building the proxy. So it can build proxys that do not point anywhere. This proxys will fall when invoking
+   their methods (runtime), and not during the setting up phase. For instance check this code out:
+
+   ```java
     
     // set up properties as above
     final InitialContext ic = new InitialContext(properties);
 
-    final String moduleName = "webapp-0.0.1-SNAPSHOT";
-    final String beanName = Math.class.getSimpleName() + "thisNameIsWrong"; // not bound name
+    final String moduleName = "jboss-as-remoteclient-0.0.1-SNAPSHOT";
+    final String beanName = Math.class.getSimpleName() + "thisSuffixDoesntExist"; // not bound name
     final String viewClassName = MathRemote.class.getName();
     final MathRemote mr = (MathRemote) ic.lookup("ejb:" + "/" + moduleName + "/" + beanName + "!" + viewClassName); // works
     assertThat(2.0, is(mr.sum(1.0, 1.0))); // fails 
     
-```
+    ```
 
-Running this code will throw the following exception:
+While the second pitfall is annoying, it is the first one that prevents creating a ServiceLocator that supports our current beans and all future additions without maintenance. Fortunately we can workaround it.
 
-java.lang.IllegalStateException: EJBCLIENT000025: No EJB receiver available for handling 
-[appName:, moduleName:webapp-0.0.1-SNAPSHOT, distinctName:]...
+The idea is to create a single remote method to auto discover the bound services, since we know that once inside JBoss we can call new InitialContext().list... without problems.
 
-2) When calling either ic.list(""), or ic.listBindings("") it throws the following exception:
-
-javax.naming.NoInitialContextException: Need to specify class name in environment or system property, 
-or as an applet parameter, or in an application resource file:  java.naming.factory.initial
-
-To solve that the remote properties are required:
+So, we create the following remote bean.
 
 ```java
-
-    props.put(Context.INITIAL_CONTEXT_FACTORY, "org.jboss.naming.remote.client.InitialContextFactory");
-    props.put(Context.PROVIDER_URL, "remote://localhost:4447");
-    
+public interface BeansRemote
+{
+    /**
+     * Returns a map of the bound beans interfaces plus its jndi name.
+     * <p>
+     * For instance:
+     * 
+     * Entry<> = { ISomeBeanRemoteInterface.class, "ejb:earName/moduleName//Bean!ISomeBeanRemoteInterface"
+     */
+    Map<Class<?>, String> getBeans() throws ClassNotFoundException, NamingException;
+}
 ```
 
+Now we can create a ServiceLocator that access remotelly the BeansRemote#getBeans() using the JBoss recommended approach, get the list of { bean interface : jndi name } bound and use it to access whenever the client requests for an interface.
 
-Calling using the old remote way: 
+This also has the advantadge that we workaround the second pitfall, since client cannot mess up while building the jndi name. 
+
+Summary
+-------
+
+We kind of proposed how to build a ServiceLocator for JBoss 7.x remote clients that works in any scenario (localhost, remotehost, auth, no auth). 
+
+Example of use:
 
 ```java
-
-    final Properties props = new Properties();
-    props.put(Context.INITIAL_CONTEXT_FACTORY, "org.jboss.naming.remote.client.InitialContextFactory");
-    props.put(Context.PROVIDER_URL, "remote://localhost:4447");
-    props.put("remote.connection.default.username", "testuser");
-    props.put("remote.connection.default.password", "testuser!");
-    props.put("jboss.naming.client.ejb.context", "true");
-
-    final InitialContext ic = new InitialContext(props);
-
-    final MathRemote mr = (MathRemote) ic.lookup("/webapp-0.0.1-SNAPSHOT/Math!org.webapp.MathRemote");
+    final MathRemote mr = Services.find(MathRemote.class);
     assertThat(2.0, is(mr.sum(1.0, 1.0)));
-    
 ```
-
-Previous pitfalls don't affect this way. Both list/listBinding work. Plus in the case a naming is wrong, lookup throws a name not bound exception like.
-
-The drawback is that it is less performant.
