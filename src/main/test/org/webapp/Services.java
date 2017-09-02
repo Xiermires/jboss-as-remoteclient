@@ -32,8 +32,6 @@ import javax.naming.InitialContext;
 import javax.naming.NamingEnumeration;
 import javax.naming.NamingException;
 
-import com.google.common.collect.Maps;
-
 public class Services
 {
     private static InitialContext ic = null;
