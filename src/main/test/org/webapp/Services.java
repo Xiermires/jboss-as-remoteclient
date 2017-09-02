@@ -32,6 +32,8 @@ import javax.naming.InitialContext;
 import javax.naming.NamingEnumeration;
 import javax.naming.NamingException;
 
+import com.google.common.collect.Maps;
+
 public class Services
 {
     private static InitialContext ic = null;
@@ -120,6 +122,9 @@ public class Services
             final BeansRemote beans = (BeansRemote) ic.lookup("ejb:" + "/" + moduleName + "/" + beanName + "!" + viewClassName);
 
             nameBindings.putAll(beans.getBeans());
+            for (Entry<Class<?>, String> entry : nameBindings.entrySet())
+                entry.setValue(entry.getValue().replace("java:jboss/exported", "ejb:"));
+            
         }
         catch (NamingException | ClassNotFoundException e1)
         {
